@@ -7,10 +7,13 @@ import rasterio.mask
 import os
 import geopandas as gpd
 import pyogrio
+import matplotlib.cm as cm
 from osgeo import gdal
 import numpy as np
 from geographiclib.geodesic import Geodesic
-
+from IPython.display import display
+from geopy.geocoders import Nominatim
+import time
 
 def open_file(filename):
     df = pd.read_csv(f'{filename}')
@@ -33,7 +36,6 @@ def file_explorer(input_dir, country, locator, file_type='tif'):
             years = glob.glob(f'./{locator}/monthly/*')
             years_new = [year[-4:] for year in years]
             for year in years_new:
-                print(f'./{locator}/{input_dir}/{year}/*{country}_masked.{file_type}')
                 VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{year}/*{country}_masked.{file_type}')
         else:
             VIIRS_files = glob.glob(f'./{locator}/{input_dir}/*{country}_masked.{file_type}')
@@ -42,7 +44,6 @@ def file_explorer(input_dir, country, locator, file_type='tif'):
             years = glob.glob(f'./{locator}/monthly/*')
             years_new = [year[-4:] for year in years]
             for year in years_new:
-                print(f'./{locator}/{input_dir}/{year}/csv/*{country}_masked.{file_type}')
                 VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{year}/csv/*{country}_masked.{file_type}')
         else:
             VIIRS_files = glob.glob(f'./{locator}/{input_dir}/csv/*{country}_masked.{file_type}')
@@ -55,12 +56,10 @@ def map_clipper(input_dir, country):
         years = glob.glob(f'./input data/monthly/*')
         years_new = [year[-4:] for year in years]
         for year in years_new:
-            print(f'./input data/{input_dir}/{year}/*.tif')
             VIIRS_files = VIIRS_files + glob.glob(f'./input data/{input_dir}/{year}/*.tif')
     else:
         VIIRS_files = glob.glob(f'./input data/{input_dir}/*.tif')
 
-    print(VIIRS_files)
     shp_file_path = glob.glob(f"./input data/shape files/{country}/*.shp")[0]
 
     with fiona.open(shp_file_path, "r") as shapefile:
@@ -126,18 +125,17 @@ def sampling(input_dir, country):
 
 def data_analysis(input_dir, country):
     VIIRS_files = file_explorer(input_dir, country, 'output')
-    summation_values = {}
+    extracted_data = {}
     for VIIRS_file in VIIRS_files:
         dataset = gdal.Open(rf'{VIIRS_file}')
         band1 = dataset.GetRasterBand(1)
         b1 = band1.ReadAsArray()
-        summation_values[viirs_year_extractor(input_dir, VIIRS_file)] = np.array(b1)
-    return summation_values
+        extracted_data[viirs_year_extractor(input_dir, VIIRS_file)] = np.array(b1)
+    return extracted_data
 
 
 def summation_analysis(input_dir, country, direction=None, cutoff=0.98, get_plot=True, get_data_return=False,
                        extrapolate_economic_data=False):
-    global country_df
     VIIRS_files = data_analysis(input_dir, country)
     for year in VIIRS_files.keys():
         if direction is None:
@@ -155,7 +153,7 @@ def summation_analysis(input_dir, country, direction=None, cutoff=0.98, get_plot
     if get_plot and (not extrapolate_economic_data):
         plt.xlabel('Year')
         plt.ylabel('total brightness')
-        plt.title(f'{input_dir} {country} {direction}')
+        plt.title(f'{input_dir.capitalize()} {country.capitalize()} Night Light, Quantile: {direction}')
         plt.plot(VIIRS_files.keys(), VIIRS_files.values())
         plt.xticks(rotation=90)
         plt.ylim(bottom=0)
@@ -167,7 +165,8 @@ def summation_analysis(input_dir, country, direction=None, cutoff=0.98, get_plot
         ax1.set_xlabel('Year')
         ax1.set_ylabel('total brightness')
         ax2.set_ylabel('GDP per capita (current US$)')
-        ax1.set_title(f'{input_dir} {country} {direction}')
+        ax1.set_title(f'{input_dir.capitalize()} {country.capitalize()} Night Light, Quantile: {direction}'
+                      )
         ax1.plot(VIIRS_files.keys(), VIIRS_files.values(), label='Night Light')
         ax2.plot(country_df.columns, country_df.iloc[0], label='economy', linestyle='dotted')
         ax2.set_ylim(ymin=0)
@@ -222,7 +221,7 @@ def city_isolation(input_dir, country: str, print_national_stat=False):
         ax2 = ax1.twinx()
         ax1.set_xlabel('Year')
         ax1.set_ylabel('total brightness')
-        ax1.set_title(f'{country} City-wise Brightness Sum')
+        ax1.set_title(f'{country.capitalize()} City-wise Total Night Light')
         if print_national_stat:
             country_dict = summation_analysis(input_dir, country, get_plot=False, get_data_return=True)
             ax2.plot(country_dict.keys(), country_dict.values(), label=country, linestyle='dotted')
@@ -236,7 +235,6 @@ def city_isolation(input_dir, country: str, print_national_stat=False):
             ax1.plot(legend_labels.keys(), legend_labels.values(), label=row["city_asciicity_ascii"])
 
         ax2.set_ylim(ymin=0)
-
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
         handles = handles1 + handles2
@@ -245,6 +243,51 @@ def city_isolation(input_dir, country: str, print_national_stat=False):
         plt.show()
     except TypeError:
         print('test')
+
+
+def distribution_curve(input_dir, country):
+    h1 = display('Analysis begin', display_id='message')
+    VIIRS_files = data_analysis(input_dir, country)
+    colors = cm.rainbow(np.linspace(0, 1, len(VIIRS_files)))
+    bins = np.linspace(0, 4, num=400)
+    plt.xlabel('Brightness')
+    plt.ylabel('Frequency')
+    plt.title(f'{input_dir.capitalize()} {country.capitalize()} Night Light distribution')
+    legend_labels = []
+
+    for year, color in zip(VIIRS_files.keys(), colors):
+        display(f'processing file {year}', display_id='message', update=True)
+        plt.hist(VIIRS_files[year][VIIRS_files[year]>0].flatten(), label=year, bins=bins, color=color, alpha=0.5)
+    display(f'', display_id='message', update=True)
+    plt.legend(loc='upper right')
+    plt.show()
+
+
+def Location_analysis(input_dir, country):
+    display('Analysis start', display_id='message1')
+    VIIRS_files = file_explorer(input_dir, country, "output", file_type="csv")
+    for file_name in VIIRS_files:
+        print(f'processing file {viirs_year_extractor(input_dir, file_name)}')
+        display(f'processing file {viirs_year_extractor(input_dir, file_name)}', display_id='message1', update=True)
+        df = open_file(file_name)
+        df_lighted = df[df['Raster Value'] > 0.0]
+        print(f'Minimum brightness and Location')
+        print(f'{df_lighted[df_lighted["Raster Value"] == min(df_lighted["Raster Value"])]}')
+        print(f'Maximum brightness and Location')
+        print(f'{df_lighted[df_lighted["Raster Value"] == max(df_lighted["Raster Value"])]}')
+        print('\n')
+        df_new = df_lighted.sort_values(by='Raster Value', ascending=False)
+        top_3 = df_new.head(3)
+        geolocator = Nominatim(user_agent='my_project')
+        for index, row in top_3.iterrows():
+            lat = row['Latitude']
+            long = row['Longitude']
+            location = geolocator.reverse(f"{lat}, {long}", timeout=None)
+            print(f"Address: {location.address}, \n Brightness: {row['Raster Value']}")
+            print('\n')
+            print('__________________________________________________________________________________________________')
+            print('\n')
+            time.sleep(3)
 
 
 if __name__ == '__main__':

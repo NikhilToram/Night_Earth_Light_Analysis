@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import glob
@@ -6,11 +5,11 @@ import fiona
 import rasterio
 import rasterio.mask
 import os
-import csv
 import geopandas as gpd
 import pyogrio
 from osgeo import gdal
 import numpy as np
+from geographiclib.geodesic import Geodesic
 
 
 def open_file(filename):
@@ -18,22 +17,39 @@ def open_file(filename):
     return df
 
 
-def file_explorer(input_dir, country, locator):
+def viirs_year_extractor(input_dir, filename):
+    if input_dir == 'monthly':
+        return filename.split('\\')[-1].replace('SVDNB_npp_', '')[:6]
+    else:
+        return filename.split('\\')[-1].replace('VNL_v21_npp_', '')[:4]
+
+
+def file_explorer(input_dir, country, locator, file_type='tif'):
     VIIRS_files = []
     if locator == 'input data':
         country = ''
-    if input_dir == 'monthly':
-        years = glob.glob(f'./{locator}/monthly/*')
-        years_new = [year[-4:] for year in years]
-        for year in years_new:
-            print(f'./{locator}/{input_dir}/{year}/*.tif')
-            VIIRS_files = VIIRS_files + glob.glob(f'./input data/{input_dir}/{year}/*{country}_masked.tif')
-    else:
-        VIIRS_files = glob.glob(f'./{locator}/{input_dir}/*{country}_masked.tif')
+    if file_type == 'tif':
+        if input_dir == 'monthly':
+            years = glob.glob(f'./{locator}/monthly/*')
+            years_new = [year[-4:] for year in years]
+            for year in years_new:
+                print(f'./{locator}/{input_dir}/{year}/*{country}_masked.{file_type}')
+                VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{year}/*{country}_masked.{file_type}')
+        else:
+            VIIRS_files = glob.glob(f'./{locator}/{input_dir}/*{country}_masked.{file_type}')
+    elif file_type == 'csv':
+        if input_dir == 'monthly':
+            years = glob.glob(f'./{locator}/monthly/*')
+            years_new = [year[-4:] for year in years]
+            for year in years_new:
+                print(f'./{locator}/{input_dir}/{year}/csv/*{country}_masked.{file_type}')
+                VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{year}/csv/*{country}_masked.{file_type}')
+        else:
+            VIIRS_files = glob.glob(f'./{locator}/{input_dir}/csv/*{country}_masked.{file_type}')
     return VIIRS_files
 
 
-def map_clipper(input_dir, country ):
+def map_clipper(input_dir, country):
     VIIRS_files = file_explorer(input_dir, country, 'input data')
     if input_dir == 'monthly':
         years = glob.glob(f'./input data/monthly/*')
@@ -108,28 +124,138 @@ def sampling(input_dir, country):
         print('end CSV printing round')
 
 
-def summation_analysis(input_dir, country):
-    VIIRS_files = file_explorer(input_dir, country, 'input')
+def data_analysis(input_dir, country):
+    VIIRS_files = file_explorer(input_dir, country, 'output')
     summation_values = {}
     for VIIRS_file in VIIRS_files:
-        dataset = gdal.Open(r'land_shallow_topo_2048.tif')
-        print(dataset.RasterCount)
+        dataset = gdal.Open(rf'{VIIRS_file}')
         band1 = dataset.GetRasterBand(1)
         b1 = band1.ReadAsArray()
-        b1 = np.array(b1)
-        summation_values[VIIRS_file.split('\\')][-1].replace('VNL_v21_npp_2013_global_vcmcfg_c', '')[:4] = b1
+        summation_values[viirs_year_extractor(input_dir, VIIRS_file)] = np.array(b1)
     return summation_values
 
 
+def summation_analysis(input_dir, country, direction=None, cutoff=0.98, get_plot=True, get_data_return=False,
+                       extrapolate_economic_data=False):
+    global country_df
+    VIIRS_files = data_analysis(input_dir, country)
+    for year in VIIRS_files.keys():
+        if direction is None:
+            VIIRS_files[year] = VIIRS_files[year].sum()
+        elif direction == 'top':
+            quantile = np.quantile(VIIRS_files[year], cutoff)
+            VIIRS_files[year] = VIIRS_files[year][VIIRS_files[year] > quantile].sum()
+        elif direction == 'bottom':
+            quantile = np.quantile(VIIRS_files[year], cutoff)
+            VIIRS_files[year] = VIIRS_files[year][VIIRS_files[year] < quantile].sum()
+
+    if extrapolate_economic_data:
+        df_econ = pd.read_csv('./data/economic data/API_NY.GDP.PCAP.CD_DS2_en_csv_v2_5358417.csv')
+        country_df = df_econ[df_econ['Country Name'] == country.capitalize()].loc[:, '2012':'2021']
+    if get_plot and (not extrapolate_economic_data):
+        plt.xlabel('Year')
+        plt.ylabel('total brightness')
+        plt.title(f'{input_dir} {country} {direction}')
+        plt.plot(VIIRS_files.keys(), VIIRS_files.values())
+        plt.xticks(rotation=90)
+        plt.ylim(bottom=0)
+        plt.show()
+
+    if get_plot and extrapolate_economic_data:
+        fig, ax1 = plt.subplots()
+        ax2 = ax1.twinx()
+        ax1.set_xlabel('Year')
+        ax1.set_ylabel('total brightness')
+        ax2.set_ylabel('GDP per capita (current US$)')
+        ax1.set_title(f'{input_dir} {country} {direction}')
+        ax1.plot(VIIRS_files.keys(), VIIRS_files.values(), label='Night Light')
+        ax2.plot(country_df.columns, country_df.iloc[0], label='economy', linestyle='dotted')
+        ax2.set_ylim(ymin=0)
+        ax1.set_ylim(ymin=0)
+        handles1, labels1 = ax1.get_legend_handles_labels()
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        handles = handles1 + handles2
+        labels = labels1 + labels2
+        plt.legend(handles, labels, loc='center left')
+        plt.show()
+
+    if get_data_return and (not extrapolate_economic_data):
+        return VIIRS_files
+
+    if get_data_return and extrapolate_economic_data:
+        return VIIRS_files, country_df
+
+
+def city_check(city_latitude, city_longitude, radius, df_all, title, skip_plotter: str):
+    result = Geodesic.WGS84.Direct(city_latitude, city_longitude, 0, radius)
+    north_lat = result['lat2']
+    result = Geodesic.WGS84.Direct(city_latitude, city_longitude, 90, radius)
+    east_lon = result['lon2']
+    result = Geodesic.WGS84.Direct(city_latitude, city_longitude, 270, radius)
+    west_lon = result['lon2']
+    result = Geodesic.WGS84.Direct(city_latitude, city_longitude, 180, radius)
+    south_lat = result['lat2']
+    # print(f'{north_lat}|{east_lon}|{west_lon}|{south_lat}')
+    df_city = df_all[((df_all['Latitude'] <= north_lat) & (df_all['Latitude'] >= south_lat)) &
+                     ((df_all['Longitude'] >= west_lon) & (df_all['Longitude'] <= east_lon))]
+    if not (skip_plotter.upper()=="N"):
+        plt.figure(figsize=(12, 8), facecolor='white')
+        plt.scatter(x=df_city['Longitude'], y=df_city['Latitude'], s=df_city['Raster Value']*0.5)
+        plt.title(f'{title}')
+        plt.show()
+    return df_city['Raster Value'].sum()
+
+
+def city_isolation(input_dir, country: str, print_national_stat=False):
+    df_cities = pd.read_csv('./data/worldcities.csv')
+    df_cities = df_cities[df_cities['country'] == country.capitalize()]
+    VIIRS_files = file_explorer(input_dir, country, 'output', file_type='csv')
+
+    population_cutoff = input(f'Input the population cutoff of the city you want to time visualize: ')
+    skip_visualization = input(f'Type "N" to skip visualization by individual city, Y for otherwise: ')
+    legend_labels = {}
+
+    try:
+        population_cutoff = int(population_cutoff)
+        df_cities = df_cities[df_cities['population'] >= population_cutoff]
+        fig, ax1 = plt.subplots()
+        ax2 = ax1.twinx()
+        ax1.set_xlabel('Year')
+        ax1.set_ylabel('total brightness')
+        ax1.set_title(f'{country} City-wise Brightness Sum')
+        if print_national_stat:
+            country_dict = summation_analysis(input_dir, country, get_plot=False, get_data_return=True)
+            ax2.plot(country_dict.keys(), country_dict.values(), label=country, linestyle='dotted')
+        for index, row in df_cities.iterrows():
+            print(f'{row["city_asciicity_ascii"]}')
+            for file_name_city in VIIRS_files:
+                year = viirs_year_extractor(input_dir, file_name_city)
+                df = open_file(file_name_city)
+                legend_labels[year] = city_check(row['lat'], row['lng'], 55000, df, f"{row['city_asciicity_ascii']} - "
+                                                                                    f"{year}", skip_visualization)
+            ax1.plot(legend_labels.keys(), legend_labels.values(), label=row["city_asciicity_ascii"])
+
+        ax2.set_ylim(ymin=0)
+
+        handles1, labels1 = ax1.get_legend_handles_labels()
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        handles = handles1 + handles2
+        labels = labels1 + labels2
+        plt.legend(handles, labels, loc='center left')
+        plt.show()
+    except TypeError:
+        print('test')
+
+
 if __name__ == '__main__':
-    VIIRS_files = glob.glob('./data/*.csv')
+    VIIRS_files_main = glob.glob('./data/*.csv')
     i = 1
-    for file_name in VIIRS_files:
+    for file_name in VIIRS_files_main:
         print(f'processing file {i}')
         i = i + 1
-        df = open_file(file_name)
-        df_lighted = df[df['NTL'] != 0.0]
+        df_main = open_file(file_name)
+        df_lighted = df_main[df_main['Raster Value'] != 0.0]
         fig = plt.figure(figsize=(12, 8), dpi=300, facecolor='white')
-        plt.scatter(x=df_lighted['Longitude'], y=df_lighted['Latitude'], s=df_lighted['NTL'] * 0.00000003)
+        plt.scatter(x=df_lighted['Longitude'], y=df_lighted['Latitude'], s=df_lighted['Raster Value'] * 0.00000003)
         plt.title(file_name[-8:-3])
         plt.show()

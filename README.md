@@ -2,22 +2,22 @@
 Analyzing and Exploring Night VIIRS Satellite's nighttime Light data's connection with economic activity.
 
 
-Hypothesis:
+**Hypothesis:**
 
-1. There is a significant positive correlation between the economic activity of a region and an increase in the night 
-2. light brightness of human settlements.
+1. There is a significant positive correlation between the economic activity of a region and an increase in the night light brightness of human settlements.
 3. There is a dip in night light brightness during the coronavirus pandemic period in various countries.
 
  
 
-Research questions:
+**Research questions:**
 
 1. Can we identify rapidly growing economic clusters using night light data?
 
 2. Can we identify activities in protected ecological areas?
 
-Initializing the project:
+**Initializing the project:**
 After loading the project to your IDE. Refer to the instruction in the "initialize the dataset.ipynb" to get started.
+
 ## Credits
 The data has been obtained and refined from:
 <ul>

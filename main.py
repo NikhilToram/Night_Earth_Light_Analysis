@@ -15,6 +15,7 @@ from IPython.display import display
 from geopy.geocoders import Nominatim
 import time
 
+
 def open_file(filename):
     df = pd.read_csv(f'{filename}')
     return df

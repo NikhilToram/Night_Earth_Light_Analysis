@@ -1,13 +1,12 @@
-# Nighttime Earth Light Analyis
-Analyzing and Exploring Night VIIRS Satillite's night-time Light data's connection with economic activity.
+# Nighttime Earth-light Analysis
+Analyzing and Exploring Night VIIRS Satellite's nighttime Light data's connection with economic activity.
 
 
 Hypothesis:
 
 1. There is a significant positive correlation between the economic activity of a region and an increase in the night 
 2. light brightness of human settlements.
-
-2. There is a dip in night light brightness during the coronavirus pandemic period in various countries.
+3. There is a dip in night light brightness during the coronavirus pandemic period in various countries.
 
  
 

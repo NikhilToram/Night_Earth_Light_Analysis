@@ -51,6 +51,8 @@ def file_explorer(input_dir, country, locator, file_type='tif'):
     return VIIRS_files
 
 
+# the following way of cropping a large geotiff image to a national boundary has been obtained from
+# https://stackoverflow.com/questions/69938501/clipping-raster-through-a-shapefile-using-python
 def map_clipper(input_dir, country):
     VIIRS_files = file_explorer(input_dir, country, 'input data')
     if input_dir == 'monthly':
@@ -87,6 +89,8 @@ def map_clipper(input_dir, country):
             dest.write(out_image)
 
 
+# the following method of sampling the data points from a raster layer has been obtained from:
+# https://gis.stackexchange.com/questions/317391/python-extract-raster-values-at-point-locations
 def sampling(input_dir, country):
     VIIRS_files = file_explorer(input_dir, country, 'output')
     print('start')
@@ -124,6 +128,8 @@ def sampling(input_dir, country):
         print('end CSV printing round')
 
 
+# The following style of data extraction has been inferred from
+# https://www.geeksforgeeks.org/visualizing-tiff-file-using-matplotlib-and-gdal-using-python/#
 def data_analysis(input_dir, country):
     VIIRS_files = file_explorer(input_dir, country, 'output')
     extracted_data = {}

@@ -1,0 +1,12 @@
+Fiona==1.9.3
+GDAL==3.4.3
+geographiclib==2.0
+geopandas==0.12.2
+geopy==2.3.0
+ipython==8.13.1
+matplotlib==3.7.1
+numpy==1.24.3
+pandas==2.0.1
+pyogrio==0.6.0
+rasterio==1.2.10
+Requests==2.30.0

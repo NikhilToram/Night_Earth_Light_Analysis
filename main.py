@@ -21,6 +21,38 @@ import os
 import requests
 
 
+# error handling from class lectures and https://www.programiz.com/python-programming/user-defined-exception
+class UnrecognizedInputDir(Exception):
+    """
+    When the input directory is not within the excepted parameters
+
+    Attributes:
+        input_dir -- The input directory string that caused the error
+        message -- explanation of the error
+    """
+
+    def __init__(self, input_dir, message="input directory is not within the expected options 'annual', 'monthly', or "
+                                          "'treecover'"):
+        self.input_dir = input_dir
+        self.message = message
+        super().__init__(self.message)
+
+
+class UnplannedConditionError(Exception):
+    """
+    When the input directory is not within the excepted parameters
+
+    Attributes:
+        message -- explanation of the error
+    """
+
+    def __init__(self, message="You are seeing this message because you have attempted to run the program "
+                               "in a condition it was not designed for. You may or may not be able to get "
+                               "it working with modifications"):
+        self.message = message
+        super().__init__(self.message)
+
+
 def open_file(filename):
     """
     The function opens the give name given, while right now this may not contain any major processing, the function has
@@ -36,31 +68,65 @@ def viirs_year_extractor(input_dir, filename):
     """
     This function extracts the year/ year-month from a given VIIRS filepath and returns it.
     :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
-    or 'monthly'
+    , 'monthly', or 'treecover'
     :param filename: the filepath that needs to be processed
     :return: either the year or the year-month string
+
+    # Extract year from an annual filepath
+    >>> viirs_year_extractor('annual', 'output\annual\VNL_v21_npp_2022_example.tif')
+    '2022'
+
+    # Extract year-month from a monthly filepath
+    >>> viirs_year_extractor('monthly', 'output\to\monthly\SVDNB_npp_202206_example.tif')
+    '202206'
+
+    # Return 'treecover' for input_dir 'treecover'
+    >>> viirs_year_extractor('treecover', 'output\treecover\file.tif')
+    'treecover'
+
+    # Raise an exception for unrecognized input_dir
+    >>> try:
+    ...     viirs_year_extractor('unknown', r'path\to\file.tif')
+    ... except UnrecognizedInputDir as e:
+    ...     print(str(e))
+    input directory is not within the expected options 'annual', 'monthly', or 'treecover'
     """
+    input_dir = input_dir.lower()
     if input_dir == 'monthly':
         return filename.split('\\')[-1].replace('SVDNB_npp_', '')[:6]
     elif input_dir == 'annual':
         return filename.split('\\')[-1].replace('VNL_v21_npp_', '')[:4]
-    # TODO handle exception cases
+    elif input_dir == 'treecover':
+        return 'treecover'
+    else:
+        raise UnrecognizedInputDir(input_dir)
 
 
 def file_explorer(input_dir, country, locator, file_type='tif'):
     """
     This function is the file explorer for the program, it is built to handle the file structure of the project.
     It works by taking in the various parameters of a file search and returning the list of files that satisfies the
-    search parameters. This allows other functions to be less verbose and more dynamic.
+    search parameters. This allows other functions to be less verbose and more dynamic. The function is branched put
+    on the basis of the file type and the corresponding input file type
     :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
     , 'monthly', or 'treecover'.
     :param country: The country name to be processed.
     :param locator: The 1st level file directory, usually 'data', input data', and 'output'.
     :param file_type: the type of file that's being searched, 'csv' or 'tif'.
     :return: returns the list of files that have been found.
+    >>> file_explorer('annual', 'India', locator='output', file_type='jpeg')
+    Traceback (most recent call last):
+    ...
+    FileNotFoundError
+    >>> file_explorer('treecover', 'thailand', 'input data')
+    Traceback (most recent call last):
+    ...
+    FileNotFoundError
     """
-    # TODO explain the code
-    # TODO handle exceptions
+    input_dir = input_dir.lower()
+    country = country.lower()
+    locator = locator.lower()
+    file_type = file_type.lower()
     VIIRS_files = []
     if locator == 'input data' and not (input_dir == 'treecover'):
         country = ''
@@ -76,12 +142,17 @@ def file_explorer(input_dir, country, locator, file_type='tif'):
                     VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{year}/*'
                                                           f'{country}_masked.{file_type}')
         elif input_dir == 'treecover':
-            VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{country}/*{file_type}')
-        else:
+            if locator == 'input data':
+                VIIRS_files = glob.glob(f'./{locator}/{input_dir}/{country}/*{file_type}')
+            elif locator == 'output':
+                VIIRS_files = glob.glob(f'./{locator}/{input_dir}/{country}_merged.{file_type}')
+        elif input_dir == 'annual':
             if locator == 'input data':
                 VIIRS_files = glob.glob(f'./{locator}/{input_dir}/*')
             else:
                 VIIRS_files = glob.glob(f'./{locator}/{input_dir}/*{country}_masked.{file_type}')
+        else:
+            raise UnrecognizedInputDir(input_dir)
     elif file_type == 'csv':
         if input_dir == 'monthly':
             years = glob.glob(f'./{locator}/monthly/*')
@@ -91,26 +162,38 @@ def file_explorer(input_dir, country, locator, file_type='tif'):
                                                       f'{file_type}')
         elif input_dir == 'treecover':
             VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{country}/*{file_type}')
-        else:
+        elif input_dir == 'annual':
             VIIRS_files = glob.glob(f'./{locator}/{input_dir}/csv/*{country}_masked.{file_type}')
+        else:
+            raise UnrecognizedInputDir(input_dir)
+    if not VIIRS_files:
+        raise FileNotFoundError
     return VIIRS_files
 
 
 # the following way of cropping a large geotiff image to a national boundary has been obtained from
 # https://stackoverflow.com/questions/69938501/clipping-raster-through-a-shapefile-using-python
-def map_clipper(input_dir, country):
+def map_clipper(input_dir, country, locator='input data'):
     """
     This function clips the given map to the bounds of the country and saves it as a new file
+    :param locator: The level 1 file directory
     :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
     , 'monthly', or 'treecover'.
     :param country: The country name to be processed.
     """
-    VIIRS_files = file_explorer(input_dir, country, 'input data')
+    input_dir = input_dir.lower()
+    country = country.lower()
+    locator = locator.lower()
+
+    VIIRS_files = file_explorer(input_dir, country, locator)
 
     shp_file_path = glob.glob(f"./input data/shape files/{country}/*.shp")[0]
 
+    # open the shape file
     with fiona.open(shp_file_path, "r") as shapefile:
         shapes = [feature["geometry"] for feature in shapefile]
+
+    # process the input files against the shapefiles
     for VIIRS_file in VIIRS_files:
         if input_dir == 'monthly':
             output_raster_path = './output/' + f'{input_dir}/' + VIIRS_file.split('\\')[-2][-4:] + "/" + \
@@ -150,6 +233,9 @@ def sampling(input_dir, country):
     :param country: The country name to be processed.
 
     """
+    input_dir = input_dir.lower()
+    country = country.lower()
+
     VIIRS_files = file_explorer(input_dir, country, 'output')
     print('start')
     print(VIIRS_files)
@@ -165,11 +251,12 @@ def sampling(input_dir, country):
     # if you don't have specific coordinates
     print('end shapefile')
     for VIIRS_file in VIIRS_files:
+
         # Read points from shapefile
         print('start CSV printing round')
+
         # Open the raster and store metadata
         src = rasterio.open(VIIRS_file)
-
         pts['Raster Value'] = [x[0] for x in src.sample(coords)]
         if (not os.path.exists('./output/' + f'{input_dir}/' + VIIRS_file.split('\\')[-2][-4:])) and input_dir == \
                 'monthly':
@@ -194,15 +281,23 @@ def data_analysis(input_dir, country):
     :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
     , 'monthly', or 'treecover'
     :param country: The country name to be processed.
-    :return: an array with all the values on a raster
+    :return: A dictionary with arrays with all the values on a raster
+    >>> data_analysis('annual', 'india').keys()
+    dict_keys(['2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019', '2020', '2021'])
+    >>> data_analysis('treecover','india').keys()
+    dict_keys(['treecover'])
     """
+    input_dir = input_dir.lower()
+    country = country.lower()
+
     VIIRS_files = file_explorer(input_dir, country, 'output')
     extracted_data = {}
     for VIIRS_file in VIIRS_files:
         dataset = gdal.Open(rf'{VIIRS_file}')
         band1 = dataset.GetRasterBand(1)
         b1 = band1.ReadAsArray()
-        extracted_data[viirs_year_extractor(input_dir, VIIRS_file)] = np.array(b1)
+        # extracted_data[viirs_year_extractor(input_dir, VIIRS_file)] = np.array(b1)
+        extracted_data[viirs_year_extractor(input_dir, VIIRS_file)] = b1
     return extracted_data
 
 
@@ -222,8 +317,31 @@ def summation_analysis(input_dir, country, direction=None, cutoff: float = 0.98,
     :param extrapolate_economic_data: The selection option to weather or not the function should also plot the
      economic data
     :return: return the data that has been worked on.
+    >>> summation_analysis('annual', 'india', get_plot=False, get_data_return=True).keys()
+    dict_keys(['2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019', '2020', '2021'])
+    >>> try:
+    ...     summation_analysis('monthly', 'india', extrapolate_economic_data= True)
+    ... except UnplannedConditionError as e:
+    ...     print(str(e))
+    You are seeing this message because you have attempted to run the program in a condition it was not designed for.\
+ You may or may not be able to get it working with modifications
+    >>> summation_analysis('monthly', 'india', get_plot=False, get_data_return=True).keys()
+    dict_keys(['202201', '202202', '202203', '202204', '202205', '202206', '202207', '202209', '202210', '202211'])
+    >>> try:
+    ...     summation_analysis('unknown', 'country')
+    ... except UnrecognizedInputDir as e:
+    ...     print(str(e))
+    input directory is not within the expected options 'annual', 'monthly', or 'treecover'
     """
+    if input_dir == 'monthly' and extrapolate_economic_data:
+        raise UnplannedConditionError
+    elif input_dir == 'treecover':
+        raise UnplannedConditionError
+    elif input_dir != 'annual' and input_dir != 'monthly':
+        raise UnrecognizedInputDir(input_dir)
     VIIRS_files = data_analysis(input_dir, country)
+
+    # sum the data
     for year in VIIRS_files.keys():
         if direction is None:
             VIIRS_files[year] = VIIRS_files[year].sum()
@@ -296,7 +414,7 @@ def city_check(city_latitude, city_longitude, radius, df_all, title, skip_plotte
                      ((df_all['Longitude'] >= west_lon) & (df_all['Longitude'] <= east_lon))]
     if not (skip_plotter.upper() == "N"):
         plt.figure(figsize=(12, 8), facecolor='white')
-        plt.scatter(x=df_city['Longitude'], y=df_city['Latitude'], s=df_city['Raster Value']*0.5)
+        plt.scatter(x=df_city['Longitude'], y=df_city['Latitude'], s=df_city['Raster Value'] * 0.5)
         plt.title(f'{title}')
         plt.show()
     return df_city['Raster Value'].sum()
@@ -310,6 +428,13 @@ def city_isolation(input_dir, country: str, print_national_stat=False):
     :param country: The country name to be processed.
     :param print_national_stat: The selection option to toggle the printing of the national stats to the plot
     """
+    input_dir = input_dir.lower()
+    country = country.lower()
+
+    if input_dir == 'monthly' or input_dir == 'treecover':
+        raise UnplannedConditionError
+    elif input_dir != 'annual':
+        raise UnrecognizedInputDir(input_dir)
     df_cities = pd.read_csv('./data/worldcities.csv')
     df_cities = df_cities[df_cities['country'] == country.capitalize()]
     VIIRS_files = file_explorer(input_dir, country, 'output', file_type='csv')
@@ -330,13 +455,14 @@ def city_isolation(input_dir, country: str, print_national_stat=False):
             country_dict = summation_analysis(input_dir, country, get_plot=False, get_data_return=True)
             ax2.plot(country_dict.keys(), country_dict.values(), label=country, linestyle='dotted')
         for index, row in df_cities.iterrows():
-            print(f'{row["city_asciicity_ascii"]}')
+            radius = input(f'Enter the radius for the city {row["city_ascii"]} in meters: ')
+            print(f'{row["city_ascii"]}')
             for file_name_city in VIIRS_files:
                 year = viirs_year_extractor(input_dir, file_name_city)
                 df = open_file(file_name_city)
-                legend_labels[year] = city_check(row['lat'], row['lng'], 55000, df, f"{row['city_asciicity_ascii']} - "
+                legend_labels[year] = city_check(row['lat'], row['lng'], int(radius), df, f"{row['city_ascii']} - "
                                                                                     f"{year}", skip_visualization)
-            ax1.plot(legend_labels.keys(), legend_labels.values(), label=row["city_asciicity_ascii"])
+            ax1.plot(legend_labels.keys(), legend_labels.values(), label=row["city_ascii"])
 
         ax2.set_ylim(ymin=0)
         handles1, labels1 = ax1.get_legend_handles_labels()
@@ -346,7 +472,7 @@ def city_isolation(input_dir, country: str, print_national_stat=False):
         plt.legend(handles, labels, loc='center left')
         plt.show()
     except TypeError:
-        print('test')
+        pass
 
 
 def distribution_curve(input_dir, country):
@@ -356,7 +482,11 @@ def distribution_curve(input_dir, country):
     , 'monthly', or 'treecover'.
     :param country: The country name to be processed.
     """
-    h1 = display('Analysis begin', display_id='message')
+    if input_dir == 'treecover':
+        raise UnplannedConditionError
+    elif input_dir != 'annual' and input_dir != 'monthly':
+        raise UnrecognizedInputDir(input_dir)
+    display('Analysis begin', display_id='message')
     VIIRS_files = data_analysis(input_dir, country)
     colors = cm.rainbow(np.linspace(0, 1, len(VIIRS_files)))
     bins = np.linspace(0, 4, num=400)
@@ -367,7 +497,8 @@ def distribution_curve(input_dir, country):
 
     for year, color in zip(VIIRS_files.keys(), colors):
         display(f'processing file {year}', display_id='message', update=True)
-        plt.hist(VIIRS_files[year][VIIRS_files[year]>0].flatten(), label=year, bins=bins, color=color, alpha=0.5)
+        plt.hist(VIIRS_files[year][VIIRS_files[year] > 0].flatten(), label=year, bins=bins, color=color, alpha=0.5)
+
     display(f'', display_id='message', update=True)
     plt.legend(loc='upper right')
     plt.show()
@@ -425,18 +556,17 @@ def treecover_tif_stitch(country):
     :param country: The country name to be processed.
     """
     shape_file_path = glob.glob(f"./input data/shape files/{country}/*.shp")
-    map_range = [[],[]]
+    map_range = [[], []]
     with fiona.open(shape_file_path[0], "r") as src:
         # Get the boundary coordinates in the CRS units
         left, bottom, right, top = src.bounds
         # Get the CRS information
         # Print the results
-    print("Left: {}, Bottom: {}, Right: {}, Top: {}".format(left, bottom, right, top))
-    left = (left//10)*10
-    bottom = (bottom//10)*10
-    right = ((right+10)//10)*10
-    top = ((top+10)//10)*10
-    print("Left: {}, Bottom: {}, Right: {}, Top: {}".format(left, bottom, right, top))
+
+    left = (left // 10) * 10
+    bottom = (bottom // 10) * 10
+    right = ((right + 10) // 10) * 10
+    top = ((top + 10) // 10) * 10
 
     for lat in range(int(bottom), int(top), 10):
         if lat < 0:
@@ -445,12 +575,12 @@ def treecover_tif_stitch(country):
             map_range[0].append(f'{lat}N')
     for lon in range(int(left), int(right), 10):
         if len(str(lon)) < 3:
-            lon = '0'+str(lon)
+            lon = '0' + str(lon)
         if int(lon) < 0:
             map_range[1].append(f'{lon}W')
         else:
             map_range[1].append(f'{lon}E')
-    print(map_range)
+
     for lat in map_range[0]:
         for lon in map_range[1]:
             treecover_downloader(country,
@@ -475,7 +605,7 @@ def treecover_tif_stitch(country):
     out_meta.update({"driver": "GTiff",
                      "height": out_image.shape[1],
                      "width": out_image.shape[2],
-                      "count": out_image.shape[0],
+                     "count": out_image.shape[0],
                      "compress": "lzw",
                      "transform": out_transform,
                      "dtype": "uint8"})
@@ -487,15 +617,25 @@ def treecover_tif_stitch(country):
     shutil.rmtree(f'./input data/treecover/{country}')
 
 
+def treecover_tracker(country):
+    '''
+    This function plots the forest cover loss rate for a given county
+    :param country: The name of the country that is being processed.
+    '''
+    h1 = display('Analysis begin', display_id='message')
+    file_data = data_analysis('treecover', country)
+    plt.xlabel('year')
+    plt.ylabel('tree cover loss')
+    plt.title(f'The tree cover loss tracker')
+    count = {}
+    for year in range(12, 21):
+        display(f'working on the {year + 2000}', display_id=f'message', update=True)
+        count[year + 2000] = np.count_nonzero(file_data['treecover'] == year)
+
+    plt.plot(count.keys(), count.values())
+    plt.show()
+
+
 if __name__ == '__main__':
-    VIIRS_files_main = glob.glob('./data/*.csv')
-    i = 1
-    for file_name in VIIRS_files_main:
-        print(f'processing file {i}')
-        i = i + 1
-        df_main = open_file(file_name)
-        df_lighted = df_main[df_main['Raster Value'] != 0.0]
-        fig = plt.figure(figsize=(12, 8), dpi=300, facecolor='white')
-        plt.scatter(x=df_lighted['Longitude'], y=df_lighted['Latitude'], s=df_lighted['Raster Value'] * 0.00000003)
-        plt.title(file_name[-8:-3])
-        plt.show()
+    """ This is a placeholder main function please refer to the main.ipynb file for executing the program"""
+    pass

@@ -1,10 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-import glob
-import fiona
-import rasterio
 import rasterio.mask
-import os
 import geopandas as gpd
 import pyogrio
 import matplotlib.cm as cm
@@ -14,38 +10,87 @@ from geographiclib.geodesic import Geodesic
 from IPython.display import display
 from geopy.geocoders import Nominatim
 import time
+import shutil
+import fiona
+import glob
+import rasterio
+from rasterio.merge import merge
+import rasterio.mask
+from rasterio.errors import RasterioIOError
+import os
+import requests
 
 
 def open_file(filename):
+    """
+    The function opens the give name given, while right now this may not contain any major processing, the function has
+     not been removed in anticipation of future common preprocessing requirements
+    :param filename: path to the file that is required to be opened
+    :return: returns the file object
+    """
     df = pd.read_csv(f'{filename}')
     return df
 
 
 def viirs_year_extractor(input_dir, filename):
+    """
+    This function extracts the year/ year-month from a given VIIRS filepath and returns it.
+    :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
+    or 'monthly'
+    :param filename: the filepath that needs to be processed
+    :return: either the year or the year-month string
+    """
     if input_dir == 'monthly':
         return filename.split('\\')[-1].replace('SVDNB_npp_', '')[:6]
-    else:
+    elif input_dir == 'annual':
         return filename.split('\\')[-1].replace('VNL_v21_npp_', '')[:4]
+    # TODO handle exception cases
 
 
 def file_explorer(input_dir, country, locator, file_type='tif'):
+    """
+    This function is the file explorer for the program, it is built to handle the file structure of the project.
+    It works by taking in the various parameters of a file search and returning the list of files that satisfies the
+    search parameters. This allows other functions to be less verbose and more dynamic.
+    :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
+    , 'monthly', or 'treecover'.
+    :param country: The country name to be processed.
+    :param locator: The 1st level file directory, usually 'data', input data', and 'output'.
+    :param file_type: the type of file that's being searched, 'csv' or 'tif'.
+    :return: returns the list of files that have been found.
+    """
+    # TODO explain the code
+    # TODO handle exceptions
     VIIRS_files = []
-    if locator == 'input data':
+    if locator == 'input data' and not (input_dir == 'treecover'):
         country = ''
+
     if file_type == 'tif':
         if input_dir == 'monthly':
             years = glob.glob(f'./{locator}/monthly/*')
             years_new = [year[-4:] for year in years]
             for year in years_new:
-                VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{year}/*{country}_masked.{file_type}')
+                if locator == 'input data':
+                    VIIRS_files = glob.glob(f'./{locator}/{input_dir}/{year}/*.{file_type}')
+                else:
+                    VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{year}/*'
+                                                          f'{country}_masked.{file_type}')
+        elif input_dir == 'treecover':
+            VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{country}/*{file_type}')
         else:
-            VIIRS_files = glob.glob(f'./{locator}/{input_dir}/*{country}_masked.{file_type}')
+            if locator == 'input data':
+                VIIRS_files = glob.glob(f'./{locator}/{input_dir}/*')
+            else:
+                VIIRS_files = glob.glob(f'./{locator}/{input_dir}/*{country}_masked.{file_type}')
     elif file_type == 'csv':
         if input_dir == 'monthly':
             years = glob.glob(f'./{locator}/monthly/*')
             years_new = [year[-4:] for year in years]
             for year in years_new:
-                VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{year}/csv/*{country}_masked.{file_type}')
+                VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{year}/csv/*{country}_masked.'
+                                                      f'{file_type}')
+        elif input_dir == 'treecover':
+            VIIRS_files = VIIRS_files + glob.glob(f'./{locator}/{input_dir}/{country}/*{file_type}')
         else:
             VIIRS_files = glob.glob(f'./{locator}/{input_dir}/csv/*{country}_masked.{file_type}')
     return VIIRS_files
@@ -54,14 +99,13 @@ def file_explorer(input_dir, country, locator, file_type='tif'):
 # the following way of cropping a large geotiff image to a national boundary has been obtained from
 # https://stackoverflow.com/questions/69938501/clipping-raster-through-a-shapefile-using-python
 def map_clipper(input_dir, country):
+    """
+    This function clips the given map to the bounds of the country and saves it as a new file
+    :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
+    , 'monthly', or 'treecover'.
+    :param country: The country name to be processed.
+    """
     VIIRS_files = file_explorer(input_dir, country, 'input data')
-    if input_dir == 'monthly':
-        years = glob.glob(f'./input data/monthly/*')
-        years_new = [year[-4:] for year in years]
-        for year in years_new:
-            VIIRS_files = VIIRS_files + glob.glob(f'./input data/{input_dir}/{year}/*.tif')
-    else:
-        VIIRS_files = glob.glob(f'./input data/{input_dir}/*.tif')
 
     shp_file_path = glob.glob(f"./input data/shape files/{country}/*.shp")[0]
 
@@ -72,15 +116,20 @@ def map_clipper(input_dir, country):
             output_raster_path = './output/' + f'{input_dir}/' + VIIRS_file.split('\\')[-2][-4:] + "/" + \
                                  VIIRS_file.split('\\')[-1][:-4] + f"_{country}_masked.tif "
         else:
-            output_raster_path = './output/' + f'{input_dir}/' + VIIRS_file.split('\\')[-1][:-4] + f"_{country}" \
-                                                                                                   f"_masked.tif "
-        with rasterio.open(VIIRS_file) as src:
-            out_image, out_transform = rasterio.mask.mask(src, shapes, crop=True)
-            out_meta = src.meta
+            output_raster_path = './output/' + f'{input_dir}/' + VIIRS_file.split('\\')[-1][:-4] + \
+                                 f"_{country}_masked.tif "
+
+        try:
+            with rasterio.open(VIIRS_file) as src:
+                out_image, out_transform = rasterio.mask.mask(src, shapes, crop=True)
+                out_meta = src.meta
+        except RasterioIOError:
+            continue
 
         out_meta.update({"driver": "GTiff",
                          "height": out_image.shape[1],
                          "width": out_image.shape[2],
+                         "compress": "lzw",
                          "transform": out_transform})
         if (not os.path.exists('./output/' + f'{input_dir}/' + VIIRS_file.split('\\')[-2][-4:])) and input_dir == \
                 'monthly':
@@ -92,6 +141,15 @@ def map_clipper(input_dir, country):
 # the following method of sampling the data points from a raster layer has been obtained from:
 # https://gis.stackexchange.com/questions/317391/python-extract-raster-values-at-point-locations
 def sampling(input_dir, country):
+    """
+    The function samples the required files against the sampling locations data which have a standard set of
+    latitude and longitude. Each of the sampling point will be assigned its corresponding value from the raster.
+    This output will be saved in a csv
+    :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
+    , 'monthly', or 'treecover'
+    :param country: The country name to be processed.
+
+    """
     VIIRS_files = file_explorer(input_dir, country, 'output')
     print('start')
     print(VIIRS_files)
@@ -131,6 +189,13 @@ def sampling(input_dir, country):
 # The following style of data extraction has been inferred from
 # https://www.geeksforgeeks.org/visualizing-tiff-file-using-matplotlib-and-gdal-using-python/#
 def data_analysis(input_dir, country):
+    """
+    Extracts the data from a given tif raster files and converts it to an array
+    :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
+    , 'monthly', or 'treecover'
+    :param country: The country name to be processed.
+    :return: an array with all the values on a raster
+    """
     VIIRS_files = file_explorer(input_dir, country, 'output')
     extracted_data = {}
     for VIIRS_file in VIIRS_files:
@@ -141,8 +206,23 @@ def data_analysis(input_dir, country):
     return extracted_data
 
 
-def summation_analysis(input_dir, country, direction=None, cutoff=0.98, get_plot=True, get_data_return=False,
+def summation_analysis(input_dir, country, direction=None, cutoff: float = 0.98, get_plot=True, get_data_return=False,
                        extrapolate_economic_data=False):
+    """
+    This function generated analyzes the data from the required files, it can be manipulated to reuse the same set of
+    code for a multitude of functionalities .
+    :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
+    , 'monthly', or 'treecover'
+    :param country: The country name to be processed.
+    :param direction: The direction in which the function's analysis needs to proceed. This is in the context of
+     quantile analysis. Either 'top' or 'bottom' is expected.
+    :param cutoff: The cutoff point for the quantile wise analysis.
+    :param get_plot: The selection option on weather or not a plot needs to be printed by the function
+    :param get_data_return: The selection option on weather or not the program should return the data it has generated
+    :param extrapolate_economic_data: The selection option to weather or not the function should also plot the
+     economic data
+    :return: return the data that has been worked on.
+    """
     VIIRS_files = data_analysis(input_dir, country)
     for year in VIIRS_files.keys():
         if direction is None:
@@ -193,6 +273,16 @@ def summation_analysis(input_dir, country, direction=None, cutoff=0.98, get_plot
 
 
 def city_check(city_latitude, city_longitude, radius, df_all, title, skip_plotter: str):
+    """
+    The function analyzes the data around a city and prints the plots if needed.
+    :param city_latitude: The city's latitude.
+    :param city_longitude: The city's longitude.
+    :param radius: The radius upto which the function needs to analyze data
+    :param df_all: The complete dataframe
+    :param title: The title for the plot
+    :param skip_plotter: The selection option to skip the printing of the plot. Expects a 'N' or 'Y'
+    :return: return the total raster value of a city
+    """
     result = Geodesic.WGS84.Direct(city_latitude, city_longitude, 0, radius)
     north_lat = result['lat2']
     result = Geodesic.WGS84.Direct(city_latitude, city_longitude, 90, radius)
@@ -204,7 +294,7 @@ def city_check(city_latitude, city_longitude, radius, df_all, title, skip_plotte
     # print(f'{north_lat}|{east_lon}|{west_lon}|{south_lat}')
     df_city = df_all[((df_all['Latitude'] <= north_lat) & (df_all['Latitude'] >= south_lat)) &
                      ((df_all['Longitude'] >= west_lon) & (df_all['Longitude'] <= east_lon))]
-    if not (skip_plotter.upper()=="N"):
+    if not (skip_plotter.upper() == "N"):
         plt.figure(figsize=(12, 8), facecolor='white')
         plt.scatter(x=df_city['Longitude'], y=df_city['Latitude'], s=df_city['Raster Value']*0.5)
         plt.title(f'{title}')
@@ -213,6 +303,13 @@ def city_check(city_latitude, city_longitude, radius, df_all, title, skip_plotte
 
 
 def city_isolation(input_dir, country: str, print_national_stat=False):
+    """
+    The function analyzes the cities in a country, by a population cutoff.
+    :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
+    , 'monthly', or 'treecover'
+    :param country: The country name to be processed.
+    :param print_national_stat: The selection option to toggle the printing of the national stats to the plot
+    """
     df_cities = pd.read_csv('./data/worldcities.csv')
     df_cities = df_cities[df_cities['country'] == country.capitalize()]
     VIIRS_files = file_explorer(input_dir, country, 'output', file_type='csv')
@@ -253,6 +350,12 @@ def city_isolation(input_dir, country: str, print_national_stat=False):
 
 
 def distribution_curve(input_dir, country):
+    """
+    Prints a distribution curve histogram for a given country.
+    :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
+    , 'monthly', or 'treecover'.
+    :param country: The country name to be processed.
+    """
     h1 = display('Analysis begin', display_id='message')
     VIIRS_files = data_analysis(input_dir, country)
     colors = cm.rainbow(np.linspace(0, 1, len(VIIRS_files)))
@@ -271,6 +374,12 @@ def distribution_curve(input_dir, country):
 
 
 def Location_analysis(input_dir, country):
+    """
+    Finds the addresses of the brightest locations across the country.
+    :param input_dir: The input directory, It is the 2nd level file directory, can be expected to be 'annual'
+    , or 'monthly'
+    :param country:
+    """
     display('Analysis start', display_id='message1')
     VIIRS_files = file_explorer(input_dir, country, "output", file_type="csv")
     for file_name in VIIRS_files:
@@ -295,6 +404,87 @@ def Location_analysis(input_dir, country):
             print('__________________________________________________________________________________________________')
             print('\n')
             time.sleep(3)
+
+
+def treecover_downloader(country, url: str):
+    """
+    This function downloads the tree cover geotiff file from the server
+    :param country: The country name to be processed.
+    :param url: the url from which the data is to be downloaded
+    """
+    r = requests.get(url, allow_redirects=True)
+    if not os.path.exists(f'./input data/treecover/{country}'):
+        os.makedirs(f'./input data/treecover/{country}')
+    open(f'./input data/treecover/{country}/{url.split("/")[-1]}', 'wb').write(r.content)
+
+
+# Open the GeoTIFF file
+def treecover_tif_stitch(country):
+    """
+    This function gets the tree cover geotiff files for a country merges the individual files to create one big raster
+    :param country: The country name to be processed.
+    """
+    shape_file_path = glob.glob(f"./input data/shape files/{country}/*.shp")
+    map_range = [[],[]]
+    with fiona.open(shape_file_path[0], "r") as src:
+        # Get the boundary coordinates in the CRS units
+        left, bottom, right, top = src.bounds
+        # Get the CRS information
+        # Print the results
+    print("Left: {}, Bottom: {}, Right: {}, Top: {}".format(left, bottom, right, top))
+    left = (left//10)*10
+    bottom = (bottom//10)*10
+    right = ((right+10)//10)*10
+    top = ((top+10)//10)*10
+    print("Left: {}, Bottom: {}, Right: {}, Top: {}".format(left, bottom, right, top))
+
+    for lat in range(int(bottom), int(top), 10):
+        if lat < 0:
+            map_range[0].append(f'{lat}S')
+        else:
+            map_range[0].append(f'{lat}N')
+    for lon in range(int(left), int(right), 10):
+        if len(str(lon)) < 3:
+            lon = '0'+str(lon)
+        if int(lon) < 0:
+            map_range[1].append(f'{lon}W')
+        else:
+            map_range[1].append(f'{lon}E')
+    print(map_range)
+    for lat in map_range[0]:
+        for lon in map_range[1]:
+            treecover_downloader(country,
+                                 url=f'https://storage.googleapis.com/earthenginepartners-hansen/GFC-2021-v1.9/'
+                                     f'Hansen_GFC-2021-v1.9_lossyear_{lat}_{lon}.tif')
+
+    # The technique to merging the individual tif raster files has been obtained from
+    # https://rasterio.readthedocs.io/en/latest/api/rasterio.merge.html
+    snippet_file_paths = glob.glob(f'./input data/treecover/{country}/*.tif')
+
+    snippet_file_raster_set = []
+    run_count = False
+    for snippet_file_path in snippet_file_paths:
+        try:
+            snippet_file_raster = rasterio.open(snippet_file_path)
+            snippet_file_raster_set.append(snippet_file_raster)
+        except RasterioIOError:
+            pass
+    out_image, out_transform = merge(snippet_file_raster_set)
+    out_meta = src.meta
+
+    out_meta.update({"driver": "GTiff",
+                     "height": out_image.shape[1],
+                     "width": out_image.shape[2],
+                      "count": out_image.shape[0],
+                     "compress": "lzw",
+                     "transform": out_transform,
+                     "dtype": "uint8"})
+
+    with rasterio.open(f'./output/treecover/{country}_merged.tif', "w", **out_meta) as dest:
+        dest.write(out_image)
+    for snippet_file_raster in snippet_file_raster_set:
+        snippet_file_raster.close()
+    shutil.rmtree(f'./input data/treecover/{country}')
 
 
 if __name__ == '__main__':

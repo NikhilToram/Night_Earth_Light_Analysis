@@ -24,6 +24,7 @@ After loading the project to your IDE. Refer to the instruction in the "initiali
 **Notes and limitations**
 1. The forest cover tiff file has not been trimmed to the national boundaries due to the processing power limitation of an average PC, however the all the required functions are made available in this program for you to test out if needed.
 2. To create the sampling points dataset for other countries using QGIS refer to credits[7]. An alternative python method has also been documented in the sampling function in the python script
+3. In view of GitHub's file size limitations an external link to india sampling file has been stored in the ./input data/sampling points/README.md
 
 ## Credits
 The data has been obtained and refined from:
